@@ -7,9 +7,7 @@ import param
 from pycaret.classification import compare_models, get_config, predict_model, tune_model
 from pycaret.utils import check_metric
 
-
-
-#from ml_bets.modeling.match_model import PipelineDatasets, run_pycaret_setup
+from feature_selection.run_pycaret_setup import run_pycaret_setup
 
 
 class FeatureSelection(param.Parameterized):
@@ -96,22 +94,24 @@ class FeatureSelection(param.Parameterized):
 
     # Init values
     ## Feature selection parameters
-    target = param.String('goal_2.5')
-    number_features = param.Number(50, bounds=(1, None))
-    target_features = param.Number(0.3, bounds=(1, None))
+    target = param.String("goal_2.5")
+    number_features = param.Number(.5, bounds=(0, None), inclusive_bounds=(False, True))
+    target_features = param.Number(0.3, bounds=(0, None), inclusive_bounds=(False, True))
     feature_division = param.Number(3, bounds=(1, 100))
     ## Metric parameters
     filter_metrics = param.Dict(_filter_metric)
     ## Model setup and model optimization parameters
-    optimize = param.Boolean(False)
-    include = param.List(['lr', 'et', 'rf'], item_type=str)
-    exclude = param.List(["qda", "knn", "nb"], item_type=str)
-    setup_kwargs = param.Dict(_setup_kwargs)
-    number_models = param.Integer(10, bounds=(2, 13))
-    sort = param.String('AUC')
     numerics = param.List(_numerics)
-    ## Class selectors
+    ignore_features = param.List(default=None, allow_None=True)
+    setup_kwargs = param.Dict(_setup_kwargs)
+    include = param.List(default=None, item_type=str, allow_None=True)
+    exclude = param.List(["qda", "knn", "nb"], item_type=str)
+    sort = param.String("AUC")
+    number_models = param.Integer(10, bounds=(2, 13))
     top_models = param.List(default=None, allow_None=True)
+    optimize = param.Boolean(False)
+    ## Class selectors
+    user_df = param.ClassSelector(class_=pd.DataFrame)
     dict_models = param.ClassSelector(class_=dict)
     tune_dict_models = param.ClassSelector(class_=dict)
     x_train = param.ClassSelector(class_=pd.DataFrame)
@@ -119,74 +119,64 @@ class FeatureSelection(param.Parameterized):
     model_tuned_df = param.ClassSelector(class_=pd.DataFrame)
     features_df = param.ClassSelector(class_=pd.DataFrame)
 
-
-    def __init__(
-        self
-    ):
-        # Instance attributes
-        # Initialize Features class
-        features = Features(output=features_path)
-        examples = features.create(
-            odds_features=odds_features,
-            odds_rankings=odds_ranking,
-            summary=summary,
-        )
-        cutoff = self.target.split("_")[-1]
-        examples = examples[~examples[f"prob_under_goals_{cutoff}"].isna()]
-        # Initialize PipelineDataset class
-        pipe_ds = PipelineDatasets(
-            features=features,
-            target=self.target,
-            examples=examples,
-            test_size=test_size,
-        )
+    def __init__(self, **kwargs):
+        # Compute the upper bound of number_features and target_features
+        if "user_df" in kwargs.keys():
+            total_features = user_df.shape[1]
+            self.param.number_features.bounds = (0, total_features)
+            self.param.target_features.bounds = (0, total_features)
+        else:
+            raise AttributeError("You should provide a 'user_df' dataframe as input.")
         # Call super
-        super(FeatureSelection, self).__init__(
-            feat_inst=features,
-            features=examples,
-            pipeline=pipe_ds,
-        )
-        # Check if too many features and compute feature list
-        self._check_too_many_features()
-        self.feature_list = self.pipeline.train_data.columns.tolist()
-        self.feature_list.remove(self.target)
+        super(FeatureSelection, self).__init__(**kwargs)
+        # Get the features of the dataframe
+        self.feature_list = self.user_df.columns.tolist()
+        self.feature_list.remove(self.target)  # target column should not be counted
         # Compute target features
         self.target_features = self.calculate_number_features(
             number_features=self.target_features, df=self.feature_list
         )
 
-    def _check_too_many_features(self):
-        """Check that the number of selected features is smaller than the whole dataset"""
-        maximum = max(self.number_features, self.target_features)
-        if maximum > self.pipeline.train_data.shape[1]:
-            raise ValueError(
-                "The number of features selected is greater than those included in "
-                "the dataset. Please, introduce a lower value."
-            )
-
     def _compute_numeric_features(self, df: pd.DataFrame):
         """Return those columns from the given dataset whose data type is numeric."""
         return df.select_dtypes(include=self.numerics).columns.tolist()
 
+    @staticmethod
+    def calculate_number_features(
+        number_features: Union[int, float], df: Union[pd.DataFrame, List]
+    ) -> int:
+        number_features_is_pct = (
+            number_features if (number_features > 0 and number_features < 1) else None
+        )
+        n_features = (
+            number_features
+            if number_features_is_pct is None
+            else int(number_features_is_pct * len(df))
+        )
+        return n_features
+
     def train_model(self):
         """Preprocess the data and select self.number_models top models."""
-        # Train dataset
+        # Selected dataset
         selected_cols = self.feature_list + [self.target]
-        train_data = self.pipeline.train_data[selected_cols]
+        train_data = self.user_df[selected_cols]
         # Numeric features
-        num_features = self._compute_numeric_features(df=train_data.drop(columns=[self.target]))
-        self.setup_kwargs["numeric_features"] = num_features
+        numeric_features = self._compute_numeric_features(
+            df=train_data.drop(columns=[self.target])
+        )
+        self.setup_kwargs["numeric_features"] = numeric_features
         # Ignore features
-        date_features = [c for c in self.pipeline.train_data.columns if 'date' in c]
-        self.setup_kwargs['ignore_features'] = date_features
-
+        self.setup_kwargs["ignore_features"] = self.ignore_features
+        # Initialize pycaret setup
         run_pycaret_setup(train_data=train_data, target=self.target, **self.setup_kwargs)
-
+        # Get train dataset and best models
         self.x_train = get_config("X_train")
+        # Compare models
+        compare_dict = {'exclude': self.exclude} if self.include is None else {'include': self.include}
         self.top_models = compare_models(
             n_select=self.number_models,
             sort=self.sort,
-            exclude=self.exclude,
+            **compare_dict,
             verbose=False,
         )
 
@@ -205,7 +195,7 @@ class FeatureSelection(param.Parameterized):
         }
 
     def create_dict_tuned_models(self, opt_list: Optional[List] = None):
-        """Create a dictionary whose keys are values are pycaret tuned models."""
+        """Create a dictionary whose keys and values are pycaret tuned models."""
         self.tune_dict_models = {}
         # Optimize parameters
         optimize_default = ["Accuracy", "Precision", "Recall", "F1", "AUC"]
@@ -252,15 +242,6 @@ class FeatureSelection(param.Parameterized):
         remove_models = list(set(remove_dict.keys()))
         dataframe.drop(labels=remove_models, axis="index", inplace=True)
         return dataframe
-
-    @staticmethod
-    def calculate_number_features(
-        number_features: Union[int, float], df: Union[pd.DataFrame, List]
-    ) -> int:
-        n_features = (
-            number_features if isinstance(number_features, int) else int(number_features * len(df))
-        )
-        return n_features
 
     def filter_best_features(self, key_model: str, models_dict: Dict):
         """Compute the most relevant features used by the given model."""
