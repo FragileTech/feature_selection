@@ -95,7 +95,7 @@ class FeatureSelection(param.Parameterized):
     # Init values
     ## Feature selection parameters
     target = param.String("goal_2.5")
-    number_features = param.Number(.5, bounds=(0, None), inclusive_bounds=(False, True))
+    number_features = param.Number(0.5, bounds=(0, None), inclusive_bounds=(False, True))
     target_features = param.Number(0.3, bounds=(0, None), inclusive_bounds=(False, True))
     feature_division = param.Number(3, bounds=(1, 100))
     ## Metric parameters
@@ -170,7 +170,9 @@ class FeatureSelection(param.Parameterized):
         # Get train dataset and best models
         self.x_train = get_config("X_train")
         # Compare models
-        compare_dict = {'exclude': self.exclude} if self.include is None else {'include': self.include}
+        compare_dict = (
+            {"exclude": self.exclude} if self.include is None else {"include": self.include}
+        )
         self.top_models = compare_models(
             n_select=self.number_models,
             sort=self.sort,
