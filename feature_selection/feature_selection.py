@@ -14,6 +14,7 @@ from pycaret.utils import check_metric
 
 class FeatureSelection(param.Parameterized):
 
+    # Class attributes
     model_class_to_name = {
         "RidgeClassifier": "ridge",
         "LogisticRegression": "lr",
@@ -37,7 +38,18 @@ class FeatureSelection(param.Parameterized):
 
     metrics_list = ["Accuracy", "AUC", "Recall", "Precision", "F1", "Kappa", "MCC"]
 
-    setup_kwargs = dict(
+    # Private class attributes
+    _filter_metric = {
+        "Accuracy": 0.5,
+        "AUC": 0.5,
+        "Recall": 0.6,
+        "Precision": 0.6,
+        "F1": 0.6,
+        "Kappa": 0.1,
+        "MCC": 0.1,
+    }
+
+    _setup_kwargs = dict(
         preprocess=True,
         train_size=0.75,
         # test_data=test_data,
@@ -80,56 +92,38 @@ class FeatureSelection(param.Parameterized):
         experiment_name="lagstest",
     )
 
-    numerics = ["int16", "int32", "int64", "float16", "float32", "float64", "int", "float"]
+    _numerics = ["int16", "int32", "int64", "float16", "float32", "float64", "int", "float"]
 
     # Init values
+    ## Feature selection parameters
     target = param.String('goal_2.5')
-    number_features = param.Number(50, bounds=(0, None))
-    target_features = param.Number(0.3, bounds=(0, None))
+    number_features = param.Number(50, bounds=(1, None))
+    target_features = param.Number(0.3, bounds=(1, None))
     feature_division = param.Number(3, bounds=(1, 100))
-    filter_metric =
-
+    ## Metric parameters
+    filter_metrics = param.Dict(_filter_metric)
+    ## Model setup and model optimization parameters
+    optimize = param.Boolean(False)
+    include = param.List(['lr', 'et', 'rf'], item_type=str)
+    exclude = param.List(["qda", "knn", "nb"], item_type=str)
+    setup_kwargs = param.Dict(_setup_kwargs)
+    number_models = param.Integer(10, bounds=(2, 13))
+    sort = param.String('AUC')
+    numerics = param.List(_numerics)
+    ## Class selectors
+    top_models = param.List(default=None, allow_None=True)
     dict_models = param.ClassSelector(class_=dict)
     tune_dict_models = param.ClassSelector(class_=dict)
+    x_train = param.ClassSelector(class_=pd.DataFrame)
     model_df = param.ClassSelector(class_=pd.DataFrame)
     model_tuned_df = param.ClassSelector(class_=pd.DataFrame)
     features_df = param.ClassSelector(class_=pd.DataFrame)
 
 
     def __init__(
-        self,
-
-
-
-        feature_division: Optional[int] = 3,
-        filter_metric: Optional[Dict] = None,
-        optimize: Optional[bool] = False,
-        exclude: Optional[List] = ["qda", "knn", "nb"],
-        number_models: Optional[int] = 10,
-        sort: Optional[str] = "AUC",
-        odds_features: Optional[bool] = True,
-        odds_ranking: Optional[bool] = True,
-        summary: Optional[bool] = True,
-        setup_kwargs: Optional[Dict] = None,
-        test_size: Optional[str] = "01-Oct-2021",
-        features_path: str = FEATURES_PATH,
-        numeric_list: Optional[List] = None,
+        self
     ):
         # Instance attributes
-        self.target = target
-        self.number_features = number_features
-        if target_features <= 0:
-            raise ValueError("Target features must be a positive, non-zero value.")
-        self.target_features = target_features if target_features is not None else number_features # TODO FIX NONE PROBLEM
-        self.feature_division = feature_division
-        self.filter_metrics = filter_metric
-        self.exclude = exclude
-        self.number_models = number_models
-        self.sort = sort
-        self.setup_kwargs = setup_kwargs if setup_kwargs else self.setup_kwargs
-        self.numerics = numeric_list if numeric_list is not None else self.numerics
-        self.top_models = None
-        self.x_train = None
         # Initialize Features class
         features = Features(output=features_path)
         examples = features.create(
