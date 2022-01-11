@@ -110,6 +110,7 @@ class FeatureSelection(param.Parameterized):
     number_models = param.Integer(10, bounds=(2, 13))
     top_models = param.List(default=None, allow_None=True)
     optimize = param.Boolean(False)
+    opt_list = param.List(["Accuracy", "Precision", "Recall", "F1", "AUC"], item_type=str)
     ## Class selectors
     user_df = param.ClassSelector(class_=pd.DataFrame)
     dict_models = param.ClassSelector(class_=dict)
@@ -145,12 +146,9 @@ class FeatureSelection(param.Parameterized):
     def calculate_number_features(
         number_features: Union[int, float], df: Union[pd.DataFrame, List]
     ) -> int:
-        number_features_is_pct = (
-            number_features if (number_features > 0 and number_features < 1) else None
-        )
         n_features = (
-            number_features
-            if number_features_is_pct is None
+            int(number_features)
+            if (number_features > 1)
             else int(number_features_is_pct * len(df))
         )
         return n_features
@@ -194,14 +192,10 @@ class FeatureSelection(param.Parameterized):
             self.model_class_to_name[key]: self.dict_models[key] for key in self.dict_models.keys()
         }
 
-    def create_dict_tuned_models(self, opt_list: Optional[List] = None):
+    def create_dict_tuned_models(self):
         """Create a dictionary whose keys and values are pycaret tuned models."""
         self.tune_dict_models = {}
-        # Optimize parameters
-        optimize_default = ["Accuracy", "Precision", "Recall", "F1", "AUC"]
-        opt_list = opt_list if opt_list else optimize_default
-        # Tuned dict
-        for (model_str, py_model), optimize in product(self.dict_models.items(), opt_list):
+        for (model_str, py_model), optimize in product(self.dict_models.items(), self.opt_list):
             self.tune_dict_models[f"{model_str}_tune_{optimize}"] = tune_model(
                 py_model, optimize=optimize, verbose=False
             )
@@ -224,19 +218,9 @@ class FeatureSelection(param.Parameterized):
 
     def remove_bad_models(self, dataframe: pd.DataFrame):
         """Filter and remove the models whose metrics do not satisfy the given conditions."""
-        metric_cond_default = {
-            "Accuracy": 0.5,
-            "AUC": 0.5,
-            "Recall": 0.6,
-            "Precision": 0.6,
-            "F1": 0.6,
-            "Kappa": 0.1,
-            "MCC": 0.1,
-        }
         remove_dict = dict()
-        metrics_cond = self.filter_metrics if self.filter_metrics else metric_cond_default
         models = dataframe.index.tolist()
-        for model, (metric, cond) in product(models, metrics_cond.items()):
+        for model, (metric, cond) in product(models, self.filter_metrics.items()):
             if dataframe.loc[model, metric] < cond:
                 remove_dict[model] = metric
         remove_models = list(set(remove_dict.keys()))
@@ -249,12 +233,12 @@ class FeatureSelection(param.Parameterized):
         cond = any([key_model.startswith(name) for name in ["lr", "lda", "ridge", "svm"]])
         score_metric = abs(py_model.coef_[0]) if cond else py_model.feature_importances_
         metrics_dict = {
-            "Model_id": key_model,
-            "Model": key_model.split("_")[0],
-            "Feature": self.x_train.columns,
-            "Score": score_metric,
+            "model_id": key_model,
+            "model": key_model.split("_")[0],
+            "feature": self.x_train.columns,
+            "score": score_metric,
         }
-        df = pd.DataFrame(metrics_dict).sort_values(by="Score", ascending=False)
+        df = pd.DataFrame(metrics_dict).sort_values(by="score", ascending=False)
         top_n_features = self.calculate_number_features(
             number_features=self.number_features, df=df
         )
@@ -292,8 +276,8 @@ class FeatureSelection(param.Parameterized):
             x.drop_duplicates(subset=self.metrics_list, keep="first", inplace=True)
             return x
 
-        df = self.model_tuned_df.groupby("Model").apply(drop)
-        return df.drop(columns="Model").reset_index(level="Model")
+        df = self.model_tuned_df.groupby("model").apply(drop)
+        return df.drop(columns="model").reset_index(level="model")
 
     def tune_df(self):
         """Update self.features_df with the most relevant features used by tuned models."""
@@ -301,12 +285,12 @@ class FeatureSelection(param.Parameterized):
         self.model_tuned_df = pd.DataFrame(
             data=[],
             index=self.tune_dict_models.keys(),
-            columns=["Model"] + self.metrics_list,
+            columns=["model"] + self.metrics_list,
         )
         # Model entry
         for prim_model in self.dict_models.keys():
             ix = [ind.startswith(prim_model) for ind in self.model_tuned_df.index]
-            self.model_tuned_df.loc[ix, "Model"] = prim_model
+            self.model_tuned_df.loc[ix, "model"] = prim_model
         # Fill dataframe
         for model, py_model in self.tune_dict_models.items():
             predict = predict_model(py_model)
@@ -322,22 +306,24 @@ class FeatureSelection(param.Parameterized):
     def run_feature_extraction(self):
         """Update self.features_df with the most relevant features used by each model."""
         # Initialize feature dataframe and train model
-        self.features_df = pd.DataFrame(data=[], columns=["Model_id", "Model", "Feature", "Score"])
+        self.features_df = pd.DataFrame(data=[], columns=["model_id", "model", "feature", "score"])
         self.train_model()
         # Run standard models
         self.create_dict_models()
         self.compute_metrics_df()
         # Run tuned models
-        self.create_dict_tuned_models()
-        if not bool(self.tune_dict_models):
-            raise ValueError("The tune dictionary is empty!")
-        self.tune_df()
+        if self.optmize is True:
+            self.create_dict_tuned_models()
+            if not bool(self.tune_dict_models):
+                raise ValueError("The tune dictionary is empty!")
+            self.tune_df()
+        # Return the list containing the features and their score
         self.features_df.index.name = "Index_rem"
         return self.features_df.reset_index().drop(columns="Index_rem")
 
     def remove_zeros(self):
-        """Remove non-relevant features (those with a zero punctuation)."""
-        ix = self.features_df["Score"] <= 0
+        """Remove non-relevant features (those with a zero score)."""
+        ix = self.features_df["score"] <= 0
         self.features_df.drop(index=self.features_df.loc[ix].index, inplace=True)
         self.features_df.reset_index(drop=True, inplace=True)
 
@@ -346,25 +332,25 @@ class FeatureSelection(param.Parameterized):
         """Normalize the pycaret score of each feature."""
 
         def norm(x):
-            x["Normal"] = x["Score"] / x["Score"].max()
+            x["normal"] = x["score"] / x["score"].max()
             return x
 
         return (
-            dataframe.groupby("Model_id")
+            dataframe.groupby("model_id")
             .apply(norm)
-            .sort_values(["Model_id", "Normal"], ascending=[True, False])
+            .sort_values(["model_id", "normal"], ascending=[True, False])
         )
 
     @staticmethod
-    def feature_punctuation(dataframe):
+    def feature_score(dataframe):
         """Assign the score to the selected features."""
-        group = dataframe.groupby("Feature")
+        group = dataframe.groupby("feature")
         sorted_data = group.agg(
-            Counts=pd.NamedAgg(column="Normal", aggfunc="count"),
-            Normal_Sum=pd.NamedAgg(column="Normal", aggfunc="sum"),
-        ).sort_values(by=["Counts", "Normal_Sum"], ascending=False)
-        sorted_data["Punctuation"] = sorted_data["Normal_Sum"] / sorted_data["Counts"]
-        return sorted_data.sort_values("Punctuation", ascending=False)
+            counts=pd.NamedAgg(column="normal", aggfunc="count"),
+            normal_sum=pd.NamedAgg(column="normal", aggfunc="sum"),
+        ).sort_values(by=["counts", "normal_sum"], ascending=False)
+        sorted_data["final_score"] = sorted_data["normal_sum"] / sorted_data["counts"]
+        return sorted_data.sort_values("final_score", ascending=False)
 
     def create_feature_list(self):
         """Run all necessary methods to extract the list of relevant features."""
@@ -373,8 +359,8 @@ class FeatureSelection(param.Parameterized):
         # Remove zeros and normalize
         self.remove_zeros()
         self.features_df = self.normalize(dataframe=self.features_df)
-        # Get punctuation
-        self.features_df = self.feature_punctuation(dataframe=self.features_df)
+        # Get score
+        self.features_df = self.feature_score(dataframe=self.features_df)
         top_n_features = self.calculate_number_features(
             number_features=self.number_features, df=self.features_df
         )
@@ -387,8 +373,8 @@ class FeatureSelection(param.Parameterized):
             # Call iteration
             self.create_feature_list()
             self.number_features = (
-                (self.number_features / self.feature_division)
-                if isinstance(self.number_features, int)
+                int(self.number_features / self.feature_division)
+                if self.number_features > 1
                 else self.number_features
             )
             if len(self.feature_list) <= 1:
