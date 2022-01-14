@@ -112,7 +112,7 @@ class FeatureSelection(param.Parameterized):
     optimize = param.Boolean(False)
     opt_list = param.List(["Accuracy", "Precision", "Recall", "F1", "AUC"], item_type=str)
     ## Class selectors
-    user_df = param.ClassSelector(class_=pd.DataFrame)
+    dataset = param.ClassSelector(class_=pd.DataFrame)
     dict_models = param.ClassSelector(class_=dict)
     tune_dict_models = param.ClassSelector(class_=dict)
     x_train = param.ClassSelector(class_=pd.DataFrame)
@@ -120,22 +120,19 @@ class FeatureSelection(param.Parameterized):
     model_tuned_df = param.ClassSelector(class_=pd.DataFrame)
     features_df = param.ClassSelector(class_=pd.DataFrame)
 
-    def __init__(self, **kwargs):
+    def __init__(self, dataset: pd.DataFrame, **kwargs):
         # Compute the upper bound of number_features and target_features
-        if "user_df" in kwargs.keys():
-            total_features = user_df.shape[1]
-            self.param.number_features.bounds = (0, total_features)
-            self.param.target_features.bounds = (0, total_features)
-        else:
-            raise AttributeError("You should provide a 'user_df' dataframe as input.")
+        total_features = dataset.shape[1]
+        self.param.number_features.bounds = (0, total_features)
+        self.param.target_features.bounds = (0, total_features)
         # Call super
-        super(FeatureSelection, self).__init__(**kwargs)
+        super(FeatureSelection, self).__init__(dataset=dataset, **kwargs)
         # Get the features of the dataframe
-        self.feature_list = self.user_df.columns.tolist()
+        self.feature_list = self.dataset.columns.tolist()
         self.feature_list.remove(self.target)  # target column should not be counted
         # Compute target features
         self.target_features = self.calculate_number_features(
-            number_features=self.target_features, df=self.feature_list
+            number_features=self.target_features, features=self.feature_list
         )
 
     def _compute_numeric_features(self, df: pd.DataFrame):
@@ -144,12 +141,12 @@ class FeatureSelection(param.Parameterized):
 
     @staticmethod
     def calculate_number_features(
-        number_features: Union[int, float], df: Union[pd.DataFrame, List]   # TODO: care with dataframes
+        number_features: Union[int, float], features: Union[pd.DataFrame, List]   # TODO: care with dataframes
     ) -> int:
         n_features = (
             int(number_features)
             if (number_features > 1)
-            else int(number_features * len(df))
+            else int(number_features * len(features))
         )
         return n_features
 
@@ -157,7 +154,7 @@ class FeatureSelection(param.Parameterized):
         """Preprocess the data and select self.number_models top models."""
         # Selected dataset
         selected_cols = self.feature_list + [self.target]
-        train_data = self.user_df[selected_cols]
+        train_data = self.dataset[selected_cols]
         # Numeric features
         numeric_features = self._compute_numeric_features(
             df=train_data.drop(columns=[self.target])
@@ -242,18 +239,18 @@ class FeatureSelection(param.Parameterized):
         }
         df = pd.DataFrame(metrics_dict).sort_values(by="score", ascending=False)
         top_n_features = self.calculate_number_features(
-            number_features=self.number_features, df=df
+            number_features=self.number_features, features=df,
         )
         return df.iloc[:top_n_features]
 
-    def extract_features(self, dataframe: pd.DataFrame, dict: Dict):
+    def extract_features(self, dataframe: pd.DataFrame, dict_models: Dict):
         """Update self.features_df with the most relevant features used by the given model."""
         models = dataframe.index.tolist()
         for model in models:  # model extracted from dataframe
             # Check
-            if model not in dict.keys():  # check no errors have been produced during operations
+            if model not in dict_models.keys():  # check no errors have been produced during operations
                 raise KeyError("The selected model is not listed in dict_models.keys()")
-            df_conc = self.filter_best_features(key_model=model, models_dict=dict)
+            df_conc = self.filter_best_features(key_model=model, models_dict=dict_models)
             self.features_df = pd.concat([self.features_df, df_conc])
 
     def compute_metrics_df(self):
@@ -269,7 +266,7 @@ class FeatureSelection(param.Parameterized):
                 dataframe=self.model_df,
             )
         self.model_df = self.remove_bad_models(dataframe=self.model_df)
-        self.extract_features(dataframe=self.model_df, dict=self.dict_models)
+        self.extract_features(dataframe=self.model_df, dict_models=self.dict_models)
 
     def filter_tuned_duplicate(self):
         """Remove tuned models with identical metrics."""
@@ -303,7 +300,7 @@ class FeatureSelection(param.Parameterized):
         self.model_tuned_df = self.filter_tuned_duplicate()
         self.model_tuned_df = self.remove_bad_models(dataframe=self.model_tuned_df)
         # Get features
-        self.extract_features(dataframe=self.model_tuned_df, dict=self.tune_dict_models)
+        self.extract_features(dataframe=self.model_tuned_df, dict_models=self.tune_dict_models)
 
     def run_feature_extraction(self):
         """Update self.features_df with the most relevant features used by each model."""
@@ -314,14 +311,14 @@ class FeatureSelection(param.Parameterized):
         self.create_dict_models()
         self.compute_metrics_df()
         # Run tuned models
-        if self.optmize is True:
+        if self.optimize:
             self.create_dict_tuned_models()
             if not bool(self.tune_dict_models):
                 raise ValueError("The tune dictionary is empty!")
             self.tune_df()
         # Return the list containing the features and their score
-        self.features_df.index.name = "Index_rem"
-        return self.features_df.reset_index().drop(columns="Index_rem")
+        self.features_df.index.name = "index_rem"
+        return self.features_df.reset_index().drop(columns="index_rem")
 
     def remove_zeros(self):
         """Remove non-relevant features (those with a zero score)."""
@@ -364,7 +361,7 @@ class FeatureSelection(param.Parameterized):
         # Get score
         self.features_df = self.feature_score(dataframe=self.features_df)
         top_n_features = self.calculate_number_features(
-            number_features=self.number_features, df=self.features_df
+            number_features=self.number_features, features=self.features_df,
         )
         filtered = self.features_df.iloc[:top_n_features]
         self.feature_list = filtered.index.tolist()
