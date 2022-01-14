@@ -144,12 +144,12 @@ class FeatureSelection(param.Parameterized):
 
     @staticmethod
     def calculate_number_features(
-        number_features: Union[int, float], df: Union[pd.DataFrame, List]
+        number_features: Union[int, float], df: Union[pd.DataFrame, List]   # TODO: care with dataframes
     ) -> int:
         n_features = (
             int(number_features)
             if (number_features > 1)
-            else int(number_features_is_pct * len(df))
+            else int(number_features * len(df))
         )
         return n_features
 
