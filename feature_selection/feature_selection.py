@@ -141,7 +141,7 @@ class FeatureSelection(param.Parameterized):
 
     @staticmethod
     def calculate_number_features(
-        number_features: Union[int, float], features: Union[pd.DataFrame, List]   # TODO: care with dataframes
+        number_features: Union[int, float], features: Union[pd.DataFrame, List]
     ) -> int:
         n_features = (
             int(number_features)
@@ -359,11 +359,11 @@ class FeatureSelection(param.Parameterized):
         self.remove_zeros()
         self.features_df = self.normalize(dataframe=self.features_df)
         # Get score
-        self.features_df = self.feature_score(dataframe=self.features_df)
+        scoreboard = self.feature_score(dataframe=self.features_df)
         top_n_features = self.calculate_number_features(
-            number_features=self.number_features, features=self.features_df,
+            number_features=self.number_features, features=scoreboard,
         )
-        filtered = self.features_df.iloc[:top_n_features]
+        filtered = scoreboard.iloc[:top_n_features]
         self.feature_list = filtered.index.tolist()
 
     def repeat_pipeline(self):
