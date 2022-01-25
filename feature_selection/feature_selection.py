@@ -141,7 +141,7 @@ class FeatureSelection(param.Parameterized):
     features_df = param.ClassSelector(class_=pd.DataFrame)
 
     def __init__(self, dataset: pd.DataFrame, **kwargs):
-        dataset=dataset.copy()
+        dataset = dataset.copy()
         # Compute the upper bound of number_features, target_features, number_models
         total_features = dataset.shape[1]
         self.param.number_features.bounds = (0, total_features)
@@ -205,7 +205,7 @@ class FeatureSelection(param.Parameterized):
         # Numeric features
         numeric_features = self._compute_numeric_features(
             df=train_data.drop(columns=[self.target])
-        )       # TODO refactor as a list?
+        )  # TODO refactor as a list?
         self.setup_kwargs["numeric_features"] = numeric_features
         # Ignore features
         self.setup_kwargs["ignore_features"] = [
@@ -215,9 +215,9 @@ class FeatureSelection(param.Parameterized):
         setup(train_data=train_data, target=self.target, **self.setup_kwargs)
         # Get train dataset and preprocessed dataframe
         self.x_train = get_config("X_train")
-        if self.x_df.empty: # TODO change x_df by dataset and add flag? 
-            self.x_df = pd.concat([get_config('X'), get_config('y')], axis=1)
-            self.setup_kwargs['preprocess'] = False     # Turn off preprocessing
+        if self.x_df.empty:  # TODO change x_df by dataset and add flag?
+            self.x_df = pd.concat([get_config("X"), get_config("y")], axis=1)
+            self.setup_kwargs["preprocess"] = False  # Turn off preprocessing
         # Compare models
         self.top_models = self.obj(**self.args)
 
