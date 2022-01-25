@@ -88,6 +88,7 @@ class FeatureSelection(param.Parameterized):
         verbose=False,
         silent=True,
         experiment_name="lagstest",
+        html=False,
     )
 
     _numerics = ["int16", "int32", "int64", "float16", "float32", "float64", "int", "float"]
