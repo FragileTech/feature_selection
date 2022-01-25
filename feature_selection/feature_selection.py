@@ -4,7 +4,7 @@ from typing import Dict, List, Optional, Union
 import numpy as np
 import pandas as pd
 import param
-from pycaret.classification import compare_models, get_config, predict_model, tune_model
+from pycaret.classification import create_model, compare_models, get_config, predict_model, tune_model
 from pycaret.utils import check_metric
 
 from feature_selection.run_pycaret_setup import run_pycaret_setup
@@ -121,10 +121,12 @@ class FeatureSelection(param.Parameterized):
     features_df = param.ClassSelector(class_=pd.DataFrame)
 
     def __init__(self, dataset: pd.DataFrame, **kwargs):
-        # Compute the upper bound of number_features and target_features
+        # Compute the upper bound of number_features, target_features, number_models
         total_features = dataset.shape[1]
         self.param.number_features.bounds = (0, total_features)
         self.param.target_features.bounds = (0, total_features)
+        if 'include' in kwargs:
+            self.param.number_models.bounds = (2, len(include))
         # Call super
         super(FeatureSelection, self).__init__(dataset=dataset, **kwargs)
         # Get the features of the dataframe
@@ -134,10 +136,36 @@ class FeatureSelection(param.Parameterized):
         self.target_features = self.calculate_number_features(
             number_features=self.target_features, features=self.feature_list
         )
+        # Get the evaluator and the arguments
+        self.obj, self.args = self._decide_model_eval()
 
     def _compute_numeric_features(self, df: pd.DataFrame):
         """Return those columns from the given dataset whose data type is numeric."""
         return df.select_dtypes(include=self.numerics).columns.tolist()
+
+    def _decide_model_eval(self):
+        """
+        Define the pycaret model evaluator depending on the number of included models.
+
+        If the 'include' list parameter equals 1, the method will return
+        the 'create_models' pycaret object.
+        If 'include' parameter list is greatear than 1, the method will
+        return the 'compare_model' pycaret object and its arguments. If
+        'include' parameter equals None, the method will return the
+        'compare_models' pycaret objects, where all possible models are
+        considered for evaluation, except those included within the 'exclude'
+        list.
+        """
+        args = {'n_select': self.number_models, 'sort': self.sort, 'verbose': False}
+        obj = compare_models
+        if not self.include:
+            args['exclude'] =  self.exclude
+        elif len(self.include) == 1:
+            obj = create_model
+            args = {'estimator': self.include[0]}
+        else:
+            args['include'] = self.include
+        return obj, args
 
     @staticmethod
     def calculate_number_features(
@@ -161,21 +189,13 @@ class FeatureSelection(param.Parameterized):
         )
         self.setup_kwargs["numeric_features"] = numeric_features
         # Ignore features
-        self.setup_kwargs["ignore_features"] = self.ignore_features
+        self.setup_kwargs["ignore_features"] = [c for c in self.ignore_features if c in self.feature_list]
         # Initialize pycaret setup
         run_pycaret_setup(train_data=train_data, target=self.target, **self.setup_kwargs)
         # Get train dataset and best models
         self.x_train = get_config("X_train")
         # Compare models
-        compare_dict = (
-            {"exclude": self.exclude} if self.include is None else {"include": self.include}
-        )
-        self.top_models = compare_models(
-            n_select=self.number_models,
-            sort=self.sort,
-            **compare_dict,
-            verbose=False,
-        )
+        self.top_models = self.obj(**self.args)
 
     def create_dict_models(self):
         """Create a dictionary whose values are pycaret standard models."""
