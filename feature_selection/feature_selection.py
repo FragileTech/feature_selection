@@ -102,8 +102,20 @@ class FeatureSelection(param.Parameterized):
     # Init values
     ## Feature selection parameters
     target = param.String("goal_2.5")
-    number_features = param.Number(0.5, bounds=(0, None), inclusive_bounds=(False, True))
-    target_features = param.Number(0.3, bounds=(0, None), inclusive_bounds=(False, True))
+    number_features = param.Number(
+        0.5,
+        bounds=(0, None),
+        inclusive_bounds=(False, True),
+        doc="Number of features selected each iteration. Only the first nth features "
+        "(where n is given by 'number_features') will be kept for the next iteration.",
+    )
+    target_features = param.Number(
+        0.3,
+        bounds=(0, None),
+        inclusive_bounds=(False, True),
+        doc="Final total number of features. The goal of the package is to reduce "
+        "the incoming columns of the dataset to this 'target_features' number.",
+    )
     feature_division = param.Number(3, bounds=(1, 100))
     ## Metric parameters
     filter_metrics = param.Dict(_filter_metric)
@@ -123,11 +135,13 @@ class FeatureSelection(param.Parameterized):
     dict_models = param.ClassSelector(class_=dict)
     tune_dict_models = param.ClassSelector(class_=dict)
     x_train = param.ClassSelector(class_=pd.DataFrame)
+    x_df = param.DataFrame(pd.DataFrame())
     model_df = param.ClassSelector(class_=pd.DataFrame)
     model_tuned_df = param.ClassSelector(class_=pd.DataFrame)
     features_df = param.ClassSelector(class_=pd.DataFrame)
 
     def __init__(self, dataset: pd.DataFrame, **kwargs):
+        dataset=dataset.copy()
         # Compute the upper bound of number_features, target_features, number_models
         total_features = dataset.shape[1]
         self.param.number_features.bounds = (0, total_features)
@@ -187,20 +201,23 @@ class FeatureSelection(param.Parameterized):
         """Preprocess the data and select self.number_models top models."""
         # Selected dataset
         selected_cols = self.feature_list + [self.target]
-        train_data = self.dataset[selected_cols]
+        train_data = self.dataset[selected_cols] if self.x_df.empty else self.x_df[selected_cols]
         # Numeric features
         numeric_features = self._compute_numeric_features(
             df=train_data.drop(columns=[self.target])
-        )
+        )       # TODO refactor as a list?
         self.setup_kwargs["numeric_features"] = numeric_features
         # Ignore features
         self.setup_kwargs["ignore_features"] = [
             c for c in self.ignore_features if c in self.feature_list
         ]
         # Initialize pycaret setup
-        run_pycaret_setup(train_data=train_data, target=self.target, **self.setup_kwargs)
-        # Get train dataset and best models
+        setup(train_data=train_data, target=self.target, **self.setup_kwargs)
+        # Get train dataset and preprocessed dataframe
         self.x_train = get_config("X_train")
+        if self.x_df.empty: # TODO change x_df by dataset and add flag? 
+            self.x_df = pd.concat([get_config('X'), get_config('y')], axis=1)
+            self.setup_kwargs['preprocess'] = False     # Turn off preprocessing
         # Compare models
         self.top_models = self.obj(**self.args)
 
