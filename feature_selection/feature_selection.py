@@ -4,7 +4,13 @@ from typing import Dict, List, Optional, Union
 import numpy as np
 import pandas as pd
 import param
-from pycaret.classification import create_model, compare_models, get_config, predict_model, tune_model
+from pycaret.classification import (
+    compare_models,
+    create_model,
+    get_config,
+    predict_model,
+    tune_model,
+)
 from pycaret.utils import check_metric
 
 from feature_selection.run_pycaret_setup import run_pycaret_setup
@@ -126,7 +132,7 @@ class FeatureSelection(param.Parameterized):
         total_features = dataset.shape[1]
         self.param.number_features.bounds = (0, total_features)
         self.param.target_features.bounds = (0, total_features)
-        if 'include' in kwargs:
+        if "include" in kwargs:
             self.param.number_models.bounds = (2, len(include))
         # Call super
         super(FeatureSelection, self).__init__(dataset=dataset, **kwargs)
@@ -157,15 +163,15 @@ class FeatureSelection(param.Parameterized):
         considered for evaluation, except those included within the 'exclude'
         list.
         """
-        args = {'n_select': self.number_models, 'sort': self.sort, 'verbose': False}
+        args = {"n_select": self.number_models, "sort": self.sort, "verbose": False}
         obj = compare_models
         if not self.include:
-            args['exclude'] =  self.exclude
+            args["exclude"] = self.exclude
         elif len(self.include) == 1:
             obj = create_model
-            args = {'estimator': self.include[0]}
+            args = {"estimator": self.include[0]}
         else:
-            args['include'] = self.include
+            args["include"] = self.include
         return obj, args
 
     @staticmethod
@@ -173,9 +179,7 @@ class FeatureSelection(param.Parameterized):
         number_features: Union[int, float], features: Union[pd.DataFrame, List]
     ) -> int:
         n_features = (
-            int(number_features)
-            if (number_features > 1)
-            else int(number_features * len(features))
+            int(number_features) if (number_features > 1) else int(number_features * len(features))
         )
         return n_features
 
@@ -190,7 +194,9 @@ class FeatureSelection(param.Parameterized):
         )
         self.setup_kwargs["numeric_features"] = numeric_features
         # Ignore features
-        self.setup_kwargs["ignore_features"] = [c for c in self.ignore_features if c in self.feature_list]
+        self.setup_kwargs["ignore_features"] = [
+            c for c in self.ignore_features if c in self.feature_list
+        ]
         # Initialize pycaret setup
         run_pycaret_setup(train_data=train_data, target=self.target, **self.setup_kwargs)
         # Get train dataset and best models
@@ -260,7 +266,8 @@ class FeatureSelection(param.Parameterized):
         }
         df = pd.DataFrame(metrics_dict).sort_values(by="score", ascending=False)
         top_n_features = self.calculate_number_features(
-            number_features=self.number_features, features=df,
+            number_features=self.number_features,
+            features=df,
         )
         return df.iloc[:top_n_features]
 
@@ -269,7 +276,9 @@ class FeatureSelection(param.Parameterized):
         models = dataframe.index.tolist()
         for model in models:  # model extracted from dataframe
             # Check
-            if model not in dict_models.keys():  # check no errors have been produced during operations
+            if (
+                model not in dict_models.keys()
+            ):  # check no errors have been produced during operations
                 raise KeyError("The selected model is not listed in dict_models.keys()")
             df_conc = self.filter_best_features(key_model=model, models_dict=dict_models)
             self.features_df = pd.concat([self.features_df, df_conc])
@@ -382,7 +391,8 @@ class FeatureSelection(param.Parameterized):
         # Get score
         scoreboard = self.feature_score(dataframe=self.features_df)
         top_n_features = self.calculate_number_features(
-            number_features=self.number_features, features=scoreboard,
+            number_features=self.number_features,
+            features=scoreboard,
         )
         filtered = scoreboard.iloc[:top_n_features]
         self.feature_list = filtered.index.tolist()
