@@ -141,6 +141,7 @@ class FeatureSelection(param.Parameterized):
     features_df = param.ClassSelector(class_=pd.DataFrame)
 
     def __init__(self, dataset: pd.DataFrame, **kwargs):
+        # Copy of the incoming dataset
         dataset = dataset.copy()
         # Compute the upper bound of number_features, target_features, number_models
         total_features = dataset.shape[1]
@@ -157,8 +158,10 @@ class FeatureSelection(param.Parameterized):
         self.target_features = self.calculate_number_features(
             number_features=self.target_features, features=self.feature_list
         )
-        # Get the evaluator and the arguments
+        # Get the evaluator and the arguments. Depends on the "include" parameter
         self.obj, self.args = self._decide_model_eval()
+        # Get all the columns whose type is numeric
+        self.numeric_features = self._compute_numeric_features(df=self.dataset[self.feature_list])
 
     def _compute_numeric_features(self, df: pd.DataFrame):
         """Return those columns from the given dataset whose data type is numeric."""
@@ -171,9 +174,9 @@ class FeatureSelection(param.Parameterized):
         If the 'include' list parameter equals 1, the method will return
         the 'create_models' pycaret object.
         If 'include' parameter list is greatear than 1, the method will
-        return the 'compare_model' pycaret object and its arguments. If
-        'include' parameter equals None, the method will return the
-        'compare_models' pycaret objects, where all possible models are
+        return the 'compare_model' pycaret object and its arguments.
+        If 'include' parameter equals None, the method will return the
+        'compare_models' pycaret object, where all possible models are
         considered for evaluation, except those included within the 'exclude'
         list.
         """
@@ -203,10 +206,9 @@ class FeatureSelection(param.Parameterized):
         selected_cols = self.feature_list + [self.target]
         train_data = self.dataset[selected_cols] if self.x_df.empty else self.x_df[selected_cols]
         # Numeric features
-        numeric_features = self._compute_numeric_features(
-            df=train_data.drop(columns=[self.target])
-        )  # TODO refactor as a list?
-        self.setup_kwargs["numeric_features"] = numeric_features
+        self.setup_kwargs["numeric_features"] = [
+            c for c in self.numeric_features if c in self.feature_list
+        ]
         # Ignore features
         self.setup_kwargs["ignore_features"] = [
             c for c in self.ignore_features if c in self.feature_list
