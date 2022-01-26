@@ -159,7 +159,7 @@ class FeatureSelection(param.Parameterized):
             number_features=self.target_features, features=self.feature_list
         )
         # Get the evaluator and the arguments. Depends on the "include" parameter
-        self.obj, self.args = self._decide_model_eval()
+        self._obj, self._args = self._decide_model_eval()
         # Get all the columns whose type is numeric
         self.numeric_features = self._compute_numeric_features(df=self.dataset[self.feature_list])
 
@@ -196,7 +196,9 @@ class FeatureSelection(param.Parameterized):
         number_features: Union[int, float], features: Union[pd.DataFrame, List]
     ) -> int:
         n_features = (
-            int(number_features) if (number_features > 1) else int(number_features * len(features))
+            int(number_features)
+            if (number_features >= 1)
+            else int(number_features * len(features))
         )
         return n_features
 
@@ -221,7 +223,7 @@ class FeatureSelection(param.Parameterized):
             self.x_df = pd.concat([get_config("X"), get_config("y")], axis=1)
             self.setup_kwargs["preprocess"] = False  # Turn off preprocessing
         # Compare models
-        self.top_models = self.obj(**self.args)
+        self.top_models = self._obj(**self._args)
 
     def create_dict_models(self):
         """Create a dictionary whose values are pycaret standard models."""
