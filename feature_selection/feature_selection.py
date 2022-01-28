@@ -104,10 +104,10 @@ class FeatureSelection(param.Parameterized):
     target = param.String("goal_2.5")
     number_features = param.Number(
         0.5,
-        bounds=(0, None),
-        inclusive_bounds=(False, True),
-        doc="Number of features selected each iteration. Only the first nth features "
-        "(where n is given by 'number_features') will be kept for the next iteration.",
+        bounds=(0, 1),
+        inclusive_bounds=(False, False),
+        doc="Number of features (percentage) selected each iteration. Only the first nth "
+        "features will be kept for the next iteration.",
     )
     target_features = param.Number(
         0.3,
@@ -116,7 +116,6 @@ class FeatureSelection(param.Parameterized):
         doc="Final total number of features. The goal of the package is to reduce "
         "the incoming columns of the dataset to this 'target_features' number.",
     )
-    feature_division = param.Number(3, bounds=(1, 100))
     ## Metric parameters
     filter_metrics = param.Dict(_filter_metric)
     ## Model setup and model optimization parameters
@@ -145,7 +144,6 @@ class FeatureSelection(param.Parameterized):
         dataset = dataset.copy()
         # Compute the upper bound of number_features, target_features, number_models
         total_features = dataset.shape[1]
-        self.param.number_features.bounds = (0, total_features)
         self.param.target_features.bounds = (0, total_features)
         if "include" in kwargs:
             self.param.number_models.bounds = (2, len(include))
@@ -423,11 +421,6 @@ class FeatureSelection(param.Parameterized):
         while len(self.feature_list) > self.target_features:
             # Call iteration
             self.create_feature_list()
-            self.number_features = (
-                int(self.number_features / self.feature_division)
-                if self.number_features > 1
-                else self.number_features
-            )
             if len(self.feature_list) <= 1:
                 break
         return self.feature_list
