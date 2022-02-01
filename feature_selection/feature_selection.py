@@ -9,6 +9,7 @@ from pycaret.classification import (
     create_model,
     get_config,
     predict_model,
+    setup,
     tune_model,
     setup,
     setup,
@@ -122,7 +123,7 @@ class FeatureSelection(param.Parameterized):
     filter_metrics = param.Dict(_filter_metric)
     ## Model setup and model optimization parameters
     numerics = param.List(_numerics)
-    ignore_features = param.List(default=None, allow_None=True)
+    ignore_features = param.List(default=[], allow_None=True)
     setup_kwargs = param.Dict(_setup_kwargs)
     include = param.List(default=None, item_type=str, allow_None=True)
     exclude = param.List(["qda", "knn", "nb"], item_type=str)
@@ -147,8 +148,9 @@ class FeatureSelection(param.Parameterized):
         # Compute the upper bound of number_features, target_features, number_models
         total_features = dataset.shape[1]
         self.param.target_features.bounds = (0, total_features)
-        if include is not None:
-            self.param.number_models.bounds = (2, len(include))
+        if "include" in kwargs:
+            self.param.number_models.default = len(kwargs["include"])
+            self.param.number_models.bounds = (0, len(kwargs["include"]))
         # Call super
         super(FeatureSelection, self).__init__(dataset=dataset, include=include, **kwargs)
         # Get the features of the dataframe
@@ -245,7 +247,11 @@ class FeatureSelection(param.Parameterized):
         self.tune_dict_models = {}
         for (model_str, py_model), optimize in product(self.dict_models.items(), self.opt_list):
             self.tune_dict_models[f"{model_str}_tune_{optimize}"] = tune_model(
-                py_model, optimize=optimize, verbose=False, n_iter=30,  choose_better= True,
+                py_model,
+                optimize=optimize,
+                verbose=False,
+                n_iter=30,
+                choose_better=True,
             )
 
     def get_metrics_df(self, test_predicted, model, dataframe):
@@ -328,10 +334,11 @@ class FeatureSelection(param.Parameterized):
             return x
 
         df = self.model_tuned_df.groupby("model").apply(drop)
-        if len(self.include) > 1 and len(self.opt_list) > 1:
-            df = df.drop(columns="model").reset_index(level="model")
-        else:
-            df = df.drop(columns="model")#.reset_index()
+        df = (
+            df.drop(columns="model").reset_index(level="model")
+            if isinstance(df.index, pd.MultiIndex)
+            else df
+        )
         return df
 
     def tune_df(self):
