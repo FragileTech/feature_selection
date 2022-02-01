@@ -11,6 +11,8 @@ from pycaret.classification import (
     predict_model,
     setup,
     tune_model,
+    setup,
+    setup,
 )
 from pycaret.utils import check_metric
 
@@ -140,7 +142,7 @@ class FeatureSelection(param.Parameterized):
     model_tuned_df = param.ClassSelector(class_=pd.DataFrame)
     features_df = param.ClassSelector(class_=pd.DataFrame)
 
-    def __init__(self, dataset: pd.DataFrame, **kwargs):
+    def __init__(self, dataset: pd.DataFrame, include=None, **kwargs):
         # Copy of the incoming dataset
         dataset = dataset.copy()
         # Compute the upper bound of number_features, target_features, number_models
@@ -150,7 +152,7 @@ class FeatureSelection(param.Parameterized):
             self.param.number_models.default = len(kwargs["include"])
             self.param.number_models.bounds = (0, len(kwargs["include"]))
         # Call super
-        super(FeatureSelection, self).__init__(dataset=dataset, **kwargs)
+        super(FeatureSelection, self).__init__(dataset=dataset, include=include, **kwargs)
         # Get the features of the dataframe
         self.feature_list = self.dataset.columns.tolist()
         self.feature_list.remove(self.target)  # target column should not be counted
@@ -162,6 +164,7 @@ class FeatureSelection(param.Parameterized):
         self._training_function, self._args = self._decide_model_eval()
         # Get all the columns whose type is numeric
         self.numeric_features = self._compute_numeric_features(df=self.dataset[self.feature_list])
+        self.ignore_features = [] if self.ignore_features is None else self.ignore_features
 
     def _compute_numeric_features(self, df: pd.DataFrame):
         """Return those columns from the given dataset whose data type is numeric."""
