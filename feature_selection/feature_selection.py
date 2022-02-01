@@ -10,6 +10,8 @@ from pycaret.classification import (
     get_config,
     predict_model,
     tune_model,
+    setup,
+    setup,
 )
 from pycaret.utils import check_metric
 
@@ -139,16 +141,16 @@ class FeatureSelection(param.Parameterized):
     model_tuned_df = param.ClassSelector(class_=pd.DataFrame)
     features_df = param.ClassSelector(class_=pd.DataFrame)
 
-    def __init__(self, dataset: pd.DataFrame, **kwargs):
+    def __init__(self, dataset: pd.DataFrame, include=None, **kwargs):
         # Copy of the incoming dataset
         dataset = dataset.copy()
         # Compute the upper bound of number_features, target_features, number_models
         total_features = dataset.shape[1]
         self.param.target_features.bounds = (0, total_features)
-        if "include" in kwargs:
+        if include is not None:
             self.param.number_models.bounds = (2, len(include))
         # Call super
-        super(FeatureSelection, self).__init__(dataset=dataset, **kwargs)
+        super(FeatureSelection, self).__init__(dataset=dataset, include=include, **kwargs)
         # Get the features of the dataframe
         self.feature_list = self.dataset.columns.tolist()
         self.feature_list.remove(self.target)  # target column should not be counted
@@ -160,6 +162,7 @@ class FeatureSelection(param.Parameterized):
         self._training_function, self._args = self._decide_model_eval()
         # Get all the columns whose type is numeric
         self.numeric_features = self._compute_numeric_features(df=self.dataset[self.feature_list])
+        self.ignore_features = [] if self.ignore_features is None else self.ignore_features
 
     def _compute_numeric_features(self, df: pd.DataFrame):
         """Return those columns from the given dataset whose data type is numeric."""
@@ -183,8 +186,8 @@ class FeatureSelection(param.Parameterized):
         if not self.include:
             args["exclude"] = self.exclude
         elif len(self.include) == 1:
-            training_function = create_model
-            args = {"estimator": self.include[0]}
+            training_function = lambda *rgs, **kwargs: [create_model(*rgs, **kwargs)]
+            args = {"estimator": self.include[0], "verbose": False}
         else:
             args["include"] = self.include
         return training_function, args
@@ -214,7 +217,7 @@ class FeatureSelection(param.Parameterized):
             c for c in self.ignore_features if c in self.feature_list
         ]
         # Initialize pycaret setup
-        setup(train_data=train_data, target=self.target, **self.setup_kwargs)
+        setup(data=train_data, target=self.target, **self.setup_kwargs)
         # Get train dataset and preprocessed dataframe
         self.x_train = get_config("X_train")
         if self.x_df.empty:  # TODO change x_df by dataset and add flag?
@@ -242,7 +245,7 @@ class FeatureSelection(param.Parameterized):
         self.tune_dict_models = {}
         for (model_str, py_model), optimize in product(self.dict_models.items(), self.opt_list):
             self.tune_dict_models[f"{model_str}_tune_{optimize}"] = tune_model(
-                py_model, optimize=optimize, verbose=False
+                py_model, optimize=optimize, verbose=False, n_iter=30,  choose_better= True,
             )
 
     def get_metrics_df(self, test_predicted, model, dataframe):
@@ -298,7 +301,7 @@ class FeatureSelection(param.Parameterized):
             if (
                 model not in dict_models.keys()
             ):  # check no errors have been produced during operations
-                raise KeyError("The selected model is not listed in dict_models.keys()")
+                raise KeyError(f"The selected model: {model} is not listed in dict_models.keys()")
             df_conc = self.filter_best_features(key_model=model, models_dict=dict_models)
             self.features_df = pd.concat([self.features_df, df_conc])
 
@@ -325,7 +328,11 @@ class FeatureSelection(param.Parameterized):
             return x
 
         df = self.model_tuned_df.groupby("model").apply(drop)
-        return df.drop(columns="model").reset_index(level="model")
+        if len(self.include) > 1 and len(self.opt_list) > 1:
+            df = df.drop(columns="model").reset_index(level="model")
+        else:
+            df = df.drop(columns="model")#.reset_index()
+        return df
 
     def tune_df(self):
         """Update self.features_df with the most relevant features used by tuned models."""
