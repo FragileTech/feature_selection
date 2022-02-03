@@ -130,6 +130,7 @@ class FeatureSelection(param.Parameterized):
     top_models = param.List(default=None, allow_None=True)
     optimize = param.Boolean(False)
     opt_list = param.List(["Accuracy", "Precision", "Recall", "F1", "AUC"], item_type=str)
+    opt_kwargs = param.Dict({})
     ## Class selectors
     dataset = param.ClassSelector(class_=pd.DataFrame)
     dict_models = param.ClassSelector(class_=dict)
@@ -247,8 +248,7 @@ class FeatureSelection(param.Parameterized):
                 py_model,
                 optimize=optimize,
                 verbose=False,
-                n_iter=30,
-                choose_better=True,
+                **self.opt_kwargs
             )
 
     def get_metrics_df(self, test_predicted, model, dataframe):
