@@ -15,7 +15,7 @@ with open(Path(__file__).with_name("README.md"), encoding="utf-8") as f:
 
 setup(
     name="feature_selection",
-    description="This module allows the user to select the most relevant features of a dataset in order to use them in a machine learning project",
+    description="Feature-selection finds the most relevant features of a dataset to be used in a classification project.",
     long_description=long_description,
     long_description_content_type="text/markdown",
     packages=find_packages(),
