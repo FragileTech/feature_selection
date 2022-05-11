@@ -15,91 +15,10 @@ from pycaret.classification import (
 from pycaret.utils import check_metric
 
 from feature_selection.run_pycaret_setup import run_pycaret_setup
-
+from feature_selection.constants import NUMERICS, SETUP_KWARGS, MODEL_CLASS_TO_NAME, METRICS_LIST, FILTER_METRIC, OPT_LIST
+from feature_selection.functions import calculate_number_features
 
 class FeatureSelection(param.Parameterized):
-
-    # Class attributes
-    model_class_to_name = {
-        "RidgeClassifier": "ridge",
-        "LogisticRegression": "lr",
-        "LinearDiscriminantAnalysis": "lda",
-        "GradientBoostingClassifier": "gbc",
-        "QuadraticDiscriminantAnalysis": "qda",
-        "LGBMClassifier": "lightgbm",
-        "AdaBoostClassifier": "ada",
-        "RandomForestClassifier": "rf",
-        "ExtraTreesClassifier": "et",
-        "GaussianNB": "nb",
-        "DecisionTreeClassifier": "dt",
-        "KNeighborsClassifier": "knn",
-        "SGDClassifier": "svm",
-        "CatBoostClassifier": "catboost",
-        "SVC": "rbfsvm",
-        "GaussianProcessClassifier": "gpc",
-        "MLPClassifier": "mlp",
-        "XGBClassifier": "xgboost",
-    }
-
-    metrics_list = ["Accuracy", "AUC", "Recall", "Precision", "F1", "Kappa", "MCC"]
-
-    # Private class attributes
-    _filter_metric = {
-        "Accuracy": 0.5,
-        "AUC": 0.5,
-        "Recall": 0.6,
-        "Precision": 0.6,
-        "F1": 0.6,
-        "Kappa": 0.1,
-        "MCC": 0.1,
-    }
-
-    _setup_kwargs = dict(
-        preprocess=True,
-        train_size=0.75,
-        # test_data=test_data,
-        session_id=123,
-        normalize=True,
-        transformation=True,
-        ignore_low_variance=True,
-        remove_multicollinearity=False,
-        multicollinearity_threshold=0.4,
-        n_jobs=-1,
-        use_gpu=False,
-        profile=False,
-        ignore_features=None,
-        fold_strategy="timeseries",
-        remove_perfect_collinearity=True,
-        create_clusters=False,
-        fold=4,
-        feature_selection=False,
-        # you can use this to keep the 95 % most relevant features (fat_sel_threshold)
-        feature_selection_threshold=0.4,
-        combine_rare_levels=False,
-        rare_level_threshold=0.02,
-        pca=False,
-        pca_method="kernel",
-        pca_components=30,
-        polynomial_features=False,
-        polynomial_degree=2,
-        polynomial_threshold=0.01,
-        trigonometry_features=False,
-        remove_outliers=False,
-        outliers_threshold=0.01,
-        feature_ratio=False,
-        feature_interaction=False,
-        # Makes everything slow AF. use to find out possibly interesting features
-        interaction_threshold=0.01,
-        fix_imbalance=False,
-        log_experiment=False,
-        verbose=False,
-        silent=True,
-        experiment_name="lagstest",
-        html=False,
-    )
-
-    _numerics = ["int16", "int32", "int64", "float16", "float32", "float64", "int", "float"]
-
     # Init values
     ## Feature selection parameters
     target = param.String("goal_2.5")
@@ -117,19 +36,22 @@ class FeatureSelection(param.Parameterized):
         doc="Final total number of features. The goal of the package is to reduce "
         "the incoming columns of the dataset to this 'target_features' number.",
     )
+    percentage_reduction = param.Number(0.65, bounds=(0, 1), inclusive_bounds=(False, False),
+                                        doc="Number of features (percentage) selected from each model.")
+    iterations = param.Number(1, bounds=(0, 10), doc="Number of iterations (repetitions) the process will be repeated.")
     ## Metric parameters
-    filter_metrics = param.Dict(_filter_metric)
+    filter_metrics = param.Dict(FILTER_METRIC)
     ## Model setup and model optimization parameters
-    numerics = param.List(_numerics)
+    numerics = param.List(NUMERICS)
     ignore_features = param.List(default=[], allow_None=True)
-    setup_kwargs = param.Dict(_setup_kwargs)
+    setup_kwargs = param.Dict(SETUP_KWARGS)
     include = param.List(default=None, item_type=str, allow_None=True)
     exclude = param.List(["qda", "knn", "nb"], item_type=str)
     sort = param.String("AUC")
     number_models = param.Integer(10, bounds=(2, 13))
     top_models = param.List(default=None, allow_None=True)
     optimize = param.Boolean(False)
-    opt_list = param.List(["Accuracy", "Precision", "Recall", "F1", "AUC"], item_type=str)
+    opt_list = param.List(OPT_LIST, item_type=str)
     opt_kwargs = param.Dict({})
     ## Class selectors
     dataset = param.ClassSelector(class_=pd.DataFrame)
@@ -156,9 +78,11 @@ class FeatureSelection(param.Parameterized):
         self.feature_list = self.dataset.columns.tolist()
         self.feature_list.remove(self.target)  # target column should not be counted
         # Compute target features
-        self.target_features = self.calculate_number_features(
+        self.target_features = calculate_number_features(
             number_features=self.target_features, features=self.feature_list
         )
+        # Compute how the selected features are reduced
+        self._reduction = self.number_features if "number_features" in kwargs else (len(self.feature_list) - self.target_features)/self.iterations
         # Get the evaluator and the arguments. Depends on the "include" parameter
         self._training_function, self._args = self._decide_model_eval()
         # Get all the columns whose type is numeric
@@ -191,17 +115,6 @@ class FeatureSelection(param.Parameterized):
         else:
             args["include"] = self.include
         return training_function, args
-
-    @staticmethod
-    def calculate_number_features(
-        number_features: Union[int, float], features: Union[pd.DataFrame, List]
-    ) -> int:
-        n_features = (
-            int(number_features)
-            if (number_features >= 1)
-            else int(number_features * len(features))
-        )
-        return n_features
 
     def train_model(self):
         """Preprocess the data and select self.number_models top models."""
@@ -237,7 +150,7 @@ class FeatureSelection(param.Parameterized):
             self.dict_models["CatBoostClassifier"] = self.dict_models.pop(oldkey[0])
         # Remap
         self.dict_models = {
-            self.model_class_to_name[key]: self.dict_models[key] for key in self.dict_models.keys()
+            MODEL_CLASS_TO_NAME[key]: self.dict_models[key] for key in self.dict_models.keys()
         }
 
     def create_dict_tuned_models(self):
@@ -290,7 +203,7 @@ class FeatureSelection(param.Parameterized):
             "score": score_metric,
         }
         df = pd.DataFrame(metrics_dict).sort_values(by="score", ascending=False)
-        top_n_features = self.calculate_number_features(
+        top_n_features = calculate_number_features(
             number_features=self.number_features,
             features=df,
         )
@@ -386,31 +299,6 @@ class FeatureSelection(param.Parameterized):
         self.features_df.drop(index=self.features_df.loc[ix].index, inplace=True)
         self.features_df.reset_index(drop=True, inplace=True)
 
-    @staticmethod
-    def normalize(dataframe):
-        """Normalize the pycaret score of each feature."""
-
-        def norm(x):
-            x["normal"] = x["score"] / x["score"].max()
-            return x
-
-        return (
-            dataframe.groupby("model_id")
-            .apply(norm)
-            .sort_values(["model_id", "normal"], ascending=[True, False])
-        )
-
-    @staticmethod
-    def feature_score(dataframe):
-        """Assign the score to the selected features."""
-        group = dataframe.groupby("feature")
-        sorted_data = group.agg(
-            counts=pd.NamedAgg(column="normal", aggfunc="count"),
-            normal_sum=pd.NamedAgg(column="normal", aggfunc="sum"),
-        ).sort_values(by=["counts", "normal_sum"], ascending=False)
-        sorted_data["final_score"] = sorted_data["normal_sum"] / sorted_data["counts"]
-        return sorted_data.sort_values("final_score", ascending=False)
-
     def create_feature_list(self):
         """Run all necessary methods to extract the list of relevant features."""
         # Call creation features dataframe
@@ -420,7 +308,7 @@ class FeatureSelection(param.Parameterized):
         self.features_df = self.normalize(dataframe=self.features_df)
         # Get score
         scoreboard = self.feature_score(dataframe=self.features_df)
-        top_n_features = self.calculate_number_features(
+        top_n_features = calculate_number_features(
             number_features=self.number_features,
             features=scoreboard,
         )
