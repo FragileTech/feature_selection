@@ -1,5 +1,6 @@
 """Module with different functions for supporting the feature_selection library"""
 import pandas as pd
+from typing import Union, List
 
 
 def calculate_number_features(
@@ -12,6 +13,11 @@ def calculate_number_features(
         else int(number_features * len(features))
     )
     return n_features
+
+
+def compute_numeric_features(include: List, df: pd.DataFrame):
+    """Return those columns from the given dataset whose data type is numeric."""
+    return df.select_dtypes(include=include).columns.tolist()
 
 
 def normalize(dataframe):

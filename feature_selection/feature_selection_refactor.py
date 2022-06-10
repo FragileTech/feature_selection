@@ -14,15 +14,22 @@ from pycaret.classification import (
 )
 from pycaret.utils import check_metric
 
+from feature_selection.constants import (
+    FILTER_METRIC,
+    METRICS_LIST,
+    MODEL_CLASS_TO_NAME,
+    NUMERICS,
+    OPT_LIST,
+    SETUP_KWARGS,
+)
+from feature_selection.functions import calculate_number_features, compute_numeric_features, normalize, feature_score
 from feature_selection.run_pycaret_setup import run_pycaret_setup
-from feature_selection.constants import NUMERICS, SETUP_KWARGS, MODEL_CLASS_TO_NAME, METRICS_LIST, FILTER_METRIC, OPT_LIST
-from feature_selection.functions import calculate_number_features
 
 
-class FeatureSelection(param.Parameterized):
+class FeatSel(param.Parameterized):
     # Init values
-    ## Feature selection parameters
-    target = param.String("goal_2.5")
+    # Feature selection parameters
+    target = param.String("goal_2.5", doc="Target feature. Feature to be predicted.")
     number_features = param.Number(
         0.5,
         bounds=(0, 1),
@@ -37,25 +44,49 @@ class FeatureSelection(param.Parameterized):
         doc="Final total number of features. The goal of the package is to reduce "
         "the incoming columns of the dataset to this 'target_features' number.",
     )
-    percentage_reduction = param.Number(0.65, bounds=(0, 1), inclusive_bounds=(False, False),
-                                        doc="Number of features (percentage) selected from each model.")
-    iterations = param.Number(1, bounds=(0, 10), doc="Number of iterations (repetitions) the process will be repeated.")
-    ## Metric parameters
-    filter_metrics = param.Dict(FILTER_METRIC)
-    ## Model setup and model optimization parameters
-    numerics = param.List(NUMERICS)
-    ignore_features = param.List(default=[], allow_None=True)
-    setup_kwargs = param.Dict(SETUP_KWARGS)
-    include = param.List(default=None, item_type=str, allow_None=True)
-    exclude = param.List(["qda", "knn", "nb"], item_type=str)
-    sort = param.String("AUC")
-    number_models = param.Integer(10, bounds=(2, 13))
+    percentage_reduction = param.Number(
+        0.65,
+        bounds=(0, 1),
+        inclusive_bounds=(False, False),
+        doc="Number of features (percentage) selected from each model.",
+    )
+    iterations = param.Number(
+        1, bounds=(0, 10), doc="Number of steps the process will be repeated."
+    )
+    # Metric parameters
+    filter_metrics = param.Dict(
+        FILTER_METRIC, doc="Metric thresholds. Minimum acceptance value of a model"
+    )
+    # Model setup and model optimization parameters
+    numerics = param.List(NUMERICS, doc="List including the numeric types.")
+    ignore_features = param.List(
+        default=[], allow_None=True, doc="Features to be ignored during the process."
+    )
+    include = param.List(
+        default=None,
+        item_type=str,
+        allow_None=True,
+        doc="List of Machine Learning models to be used during the process.",
+    )
+    exclude = param.List(
+        ["qda", "knn", "nb"],
+        item_type=str,
+        doc="List of Machine Learning models not considered during the process.",
+    )
+    setup_kwargs = param.Dict(SETUP_KWARGS, doc="Configuration dictionary of the model setup.")
+    sort = param.String("AUC", doc="Establishes how the models are sorted.")
+    number_models = param.Integer(10, bounds=(2, 13), doc="Number of models to be selected")
+    optimize = param.Boolean(False, doc="Start a optimization process for the selected models.")
+    opt_list = param.List(
+        OPT_LIST, item_type=str, doc="List containing the parameters to be optimize."
+    )
+    opt_kwargs = param.Dict(
+        {}, doc='Additional parameters passed to `pycaret.tune_model` function.'
+    )
+    # Class selectors
+    _flag = param.Boolean(True)
     _top_models = param.List(default=None, allow_None=True)
-    optimize = param.Boolean(False)
-    opt_list = param.List(OPT_LIST, item_type=str)
-    opt_kwargs = param.Dict({})
-    ## Class selectors
-    dataset = param.ClassSelector(class_=pd.DataFrame)
+    _dataset = param.ClassSelector(class_=pd.DataFrame)
     _dict_models = param.ClassSelector(class_=dict)
     _tune_dict_models = param.ClassSelector(class_=dict)
     _x_train = param.ClassSelector(class_=pd.DataFrame)
@@ -64,17 +95,20 @@ class FeatureSelection(param.Parameterized):
     _model_tuned_df = param.ClassSelector(class_=pd.DataFrame)
     _features_df = param.ClassSelector(class_=pd.DataFrame)
 
+
+class FeatureSelection(FeatSel):
     def __init__(self, dataset: pd.DataFrame, **kwargs):
         # Copy of the incoming dataset
         dataset = dataset.copy()
         # Compute the upper bound of number_features, target_features, number_models
         total_features = dataset.shape[1]
         self.param.target_features.bounds = (0, total_features)
+        self.param.number_features.bounds = (0, total_features - 1)
         if "include" in kwargs:
             self.param.number_models.default = len(kwargs["include"])
             self.param.number_models.bounds = (0, len(kwargs["include"]))
         # Call super
-        super(FeatureSelection, self).__init__(dataset=dataset, **kwargs)
+        super(FeatureSelection, self).__init__(_dataset=dataset, **kwargs)
         # Get the features of the dataframe
         self.feature_list = self.dataset.columns.tolist()
         self.feature_list.remove(self.target)  # target column should not be counted
@@ -83,15 +117,41 @@ class FeatureSelection(param.Parameterized):
             number_features=self.target_features, features=self.feature_list
         )
         # Compute how the selected features are reduced
-        self._reduction = self.number_features if "number_features" in kwargs else (len(self.feature_list) - self.target_features)/self.iterations
+        self._reduction = (
+            self.number_features
+            if ("iterations" not in kwargs) and ("number_features" in kwargs)
+            else (len(self.feature_list) - self.target_features) / self.iterations
+        )
         # Get the evaluator and the arguments. Depends on the "include" parameter
         self._training_function, self._args = self._decide_model_eval()
         # Get all the columns whose type is numeric
-        self.numeric_features = self._compute_numeric_features(df=self.dataset[self.feature_list])
+        self.numeric_features = compute_numeric_features(
+            include=self.numerics, df=self.dataset[self.feature_list]
+        )
 
-    def _compute_numeric_features(self, df: pd.DataFrame):
-        """Return those columns from the given dataset whose data type is numeric."""
-        return df.select_dtypes(include=self.numerics).columns.tolist()
+    @property
+    def dataset(self):
+        return self._dataset
+
+    @property
+    def x_df(self):
+        return self._x_df
+
+    @property
+    def x_train(self):
+        return self._x_train
+
+    @property
+    def dict_models(self):
+        return self._dict_models
+
+    @property
+    def tune_dict_models(self):
+        return self._tune_dict_models
+
+    @property
+    def features_df(self):
+        return self._features_df
 
     def _decide_model_eval(self):
         """
@@ -99,7 +159,7 @@ class FeatureSelection(param.Parameterized):
 
         If the 'include' list parameter equals 1, the method will return
         the 'create_models' pycaret object.
-        If 'include' parameter list is greatear than 1, the method will
+        If 'include' parameter list is greater than 1, the method will
         return the 'compare_model' pycaret object and its arguments.
         If 'include' parameter equals None, the method will return the
         'compare_models' pycaret object, where all possible models are
@@ -121,7 +181,7 @@ class FeatureSelection(param.Parameterized):
         """Preprocess the data and select self.number_models top models."""
         # Selected dataset
         selected_cols = self.feature_list + [self.target]
-        train_data = self.dataset[selected_cols] if self._x_df.empty else self._x_df[selected_cols]
+        train_data = self.dataset[selected_cols]  # if self.x_df.empty else self.x_df[selected_cols].copy()
         # Numeric features
         self.setup_kwargs["numeric_features"] = [
             c for c in self.numeric_features if c in self.feature_list
@@ -134,9 +194,10 @@ class FeatureSelection(param.Parameterized):
         setup(data=train_data, target=self.target, **self.setup_kwargs)
         # Get train dataset and preprocessed dataframe
         self._x_train = get_config("X_train")
-        if self._x_df.empty:  # TODO change x_df by dataset and add flag?
-            self._x_df = pd.concat([get_config("X"), get_config("y")], axis=1)
+        if self._flag:
+            self._dataset = pd.concat([get_config("X"), get_config("y")], axis=1)
             self.setup_kwargs["preprocess"] = False  # Turn off preprocessing
+            self._flag = False
         # Compare models
         self._top_models = self._training_function(**self._args)
 
@@ -168,7 +229,7 @@ class FeatureSelection(param.Parameterized):
     def get_metrics_df(self, test_predicted, model, dataframe):
         """Compute different metric values for the given model."""
         value_dct = dict()
-        for metric in self.metrics_list:
+        for metric in METRICS_LIST:
             try:
                 value_dct[metric] = check_metric(
                     actual=test_predicted[self.target],
@@ -200,19 +261,18 @@ class FeatureSelection(param.Parameterized):
         metrics_dict = {
             "model_id": key_model,
             "model": key_model.split("_")[0],
-            "feature": self._x_train.columns,
+            "feature": self.x_train.columns,
             "score": score_metric,
         }
         df = pd.DataFrame(metrics_dict).sort_values(by="score", ascending=False)
         top_n_features = calculate_number_features(
-            number_features=self.number_features,
+            number_features=self.percentage_reduction,
             features=df,
         )
         return df.iloc[:top_n_features]
 
-    def extract_features(self, dataframe: pd.DataFrame, dict_models: Dict):
+    def extract_features(self, models: List, dict_models: Dict):
         """Update self.features_df with the most relevant features used by the given model."""
-        models = dataframe.index.tolist()
         for model in models:  # model extracted from dataframe
             # Check
             if (
@@ -225,7 +285,7 @@ class FeatureSelection(param.Parameterized):
     def compute_metrics_df(self):
         """Update self.features_df with the most relevant features used by the standard models."""
         self._model_df = pd.DataFrame(
-            data=[], index=self._dict_models.keys(), columns=self.metrics_list
+            data=[], index=self._dict_models.keys(), columns=METRICS_LIST
         )
         for model, py_model in self._dict_models.items():
             predict = predict_model(py_model)
@@ -235,13 +295,13 @@ class FeatureSelection(param.Parameterized):
                 dataframe=self._model_df,
             )
         self._model_df = self.remove_bad_models(dataframe=self._model_df)
-        self.extract_features(dataframe=self._model_df, dict_models=self._dict_models)
+        self.extract_features(models=self._model_df.index.tolist(), dict_models=self._dict_models)
 
     def filter_tuned_duplicate(self):
         """Remove tuned models with identical metrics."""
 
         def drop(x):
-            x.drop_duplicates(subset=self.metrics_list, keep="first", inplace=True)
+            x.drop_duplicates(subset=METRICS_LIST, keep="first", inplace=True)
             return x
 
         df = self._model_tuned_df.groupby("model").apply(drop)
@@ -257,8 +317,8 @@ class FeatureSelection(param.Parameterized):
         # Tune dataframe
         self._model_tuned_df = pd.DataFrame(
             data=[],
-            index=self._tune_dict_models.keys(),
-            columns=["model"] + self.metrics_list,
+            index=self.tune_dict_models.keys(),
+            columns=["model"] + METRICS_LIST,
         )
         # Model entry
         for prim_model in self._dict_models.keys():
@@ -274,7 +334,7 @@ class FeatureSelection(param.Parameterized):
         self._model_tuned_df = self.filter_tuned_duplicate()
         self._model_tuned_df = self.remove_bad_models(dataframe=self._model_tuned_df)
         # Get features
-        self.extract_features(dataframe=self._model_tuned_df, dict_models=self._tune_dict_models)
+        self.extract_features(models=self._model_tuned_df.index.tolist(), dict_models=self._tune_dict_models)
 
     def run_feature_extraction(self):
         """Update self.features_df with the most relevant features used by each model."""
@@ -306,9 +366,9 @@ class FeatureSelection(param.Parameterized):
         self._features_df = self.run_feature_extraction()
         # Remove zeros and normalize
         self.remove_zeros()
-        self._features_df = self.normalize(dataframe=self._features_df)
+        self._features_df = normalize(dataframe=self._features_df)
         # Get score
-        scoreboard = self.feature_score(dataframe=self._features_df)
+        scoreboard = feature_score(dataframe=self._features_df)
         top_n_features = calculate_number_features(
             number_features=self.number_features,
             features=scoreboard,
