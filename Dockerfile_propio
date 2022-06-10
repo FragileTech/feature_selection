@@ -2,12 +2,16 @@ FROM ubuntu:20.04
 
 ARG JUPYTER_PASSWORD = "feature_selection"
 
+ENV BROWSER=/browser \
+    LC_ALL=en_US.UTF-8 \
+    LANG=en_US.UTF-8
+
 COPY Makefile.docker /Makefile
 
 RUN apt-get update && \
     apt-get install -y --no-install-suggests --no-install-recommends make cmake && \
-    make install-common-dependencies && \
     make install-python3.8 && \
+    make install-common-dependencies && \
     make install-python-libs && \
 
 COPY . /feature_selection
